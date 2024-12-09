@@ -1,7 +1,15 @@
-from flask import Flask, render_template_string, session, redirect, url_for, request
+from flask import Flask, render_template_string, session, redirect, url_for, request, jsonify
+import stripe
 
 app = Flask(__name__)
 app.secret_key = "your-secret-key"
+
+# Stripe Configuration
+stripe.api_key = "sk_test_Your_Secret_Key"  # Replace with your Stripe secret key
+STRIPE_PRICE_ID = "price_Your_Price_ID"  # Replace with your Stripe price ID
+
+# Dummy user database (in-memory, for simplicity)
+users = {}
 
 @app.route("/")
 def home():
@@ -42,7 +50,7 @@ def home():
                 <button class="btn" type="button" {% if not subscribed %}disabled{% endif %}>Generate Prompt</button>
             </form>
             {% if not logged_in %}
-                <p class="notice">Please <a href="/login">log in</a> or <a href="/subscribe">subscribe</a> to use the generator.</p>
+                <p class="notice">Please <a href="/login">log in</a> or <a href="/register">register</a> to use the generator.</p>
             {% elif not subscribed %}
                 <p class="notice">Please <a href="/subscribe">subscribe</a> to enable the generator.</p>
             {% endif %}
@@ -51,45 +59,81 @@ def home():
     </html>
     """, logged_in=logged_in, subscribed=subscribed)
 
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
+        if username in users:
+            return "User already exists. Please log in instead."
+        users[username] = {"password": password, "subscribed": False}
+        return redirect(url_for("login"))
+    return render_template_string("""
+    <h1>Register</h1>
+    <form method="POST">
+        <label>Username:</label><br>
+        <input type="text" name="username" required><br>
+        <label>Password:</label><br>
+        <input type="password" name="password" required><br>
+        <button type="submit">Register</button>
+    </form>
+    """)
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")
-        if username and password:  # Simplified for demonstration
+        user = users.get(username)
+        if user and user["password"] == password:
             session["logged_in"] = True
+            session["username"] = username
+            session["subscribed"] = user["subscribed"]
             return redirect(url_for("home"))
         return "Invalid credentials. Please try again."
     return render_template_string("""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Login</title>
-    </head>
-    <body>
-        <h1>Login</h1>
-        <form method="POST">
-            <label>Username:</label><br>
-            <input type="text" name="username" required><br>
-            <label>Password:</label><br>
-            <input type="password" name="password" required><br>
-            <button type="submit">Login</button>
-        </form>
-    </body>
-    </html>
+    <h1>Login</h1>
+    <form method="POST">
+        <label>Username:</label><br>
+        <input type="text" name="username" required><br>
+        <label>Password:</label><br>
+        <input type="password" name="password" required><br>
+        <button type="submit">Login</button>
+    </form>
     """)
 
 @app.route("/subscribe")
 def subscribe():
-    session["subscribed"] = True
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+    username = session["username"]
+
+    # Redirect user to Stripe checkout
+    checkout_session = stripe.checkout.Session.create(
+        payment_method_types=["card"],
+        line_items=[
+            {
+                "price": STRIPE_PRICE_ID,
+                "quantity": 1,
+            }
+        ],
+        mode="subscription",
+        success_url=url_for("subscription_success", _external=True),
+        cancel_url=url_for("home", _external=True),
+    )
+    return redirect(checkout_session.url)
+
+@app.route("/subscription_success")
+def subscription_success():
+    username = session.get("username")
+    if username:
+        users[username]["subscribed"] = True
+        session["subscribed"] = True
     return redirect(url_for("home"))
 
 @app.route("/logout")
 def logout():
-    session.pop("logged_in", None)
-    session.pop("subscribed", None)
+    session.clear()
     return redirect(url_for("home"))
 
 if __name__ == "__main__":
