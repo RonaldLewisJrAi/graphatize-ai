@@ -1,5 +1,7 @@
 from flask import Flask, render_template_string, session, redirect, url_for, request, jsonify
 import stripe
+import smtplib  # For email verification
+import random  # To generate verification codes
 
 app = Flask(__name__)
 app.secret_key = "your-secret-key"
@@ -8,26 +10,26 @@ app.secret_key = "your-secret-key"
 stripe.api_key = "sk_test_Your_Secret_Key"  # Replace with your Stripe secret key
 STRIPE_PRICE_ID = "price_Your_Price_ID"  # Replace with your Stripe price ID
 
-# Dummy user database (in-memory, for simplicity)
-users = {}
+# Dummy database for users and prompts
+users = {}  # Example: {"username": {"password": "hash", "email": "email", "verified": False, "subscribed": False, "saved_prompts": []}}
+verification_codes = {}  # Temporary storage for email verification codes
 
 @app.route("/")
 def home():
     logged_in = session.get("logged_in", False)
     subscribed = session.get("subscribed", False)
+    username = session.get("username")
 
     return render_template_string("""
     <!DOCTYPE html>
-    <html lang="en">
+    <html>
     <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Graphatize AI Art Generator</title>
         <style>
-            body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f9; }
-            header { background: #333; color: white; padding: 10px 20px; text-align: center; }
-            .container { max-width: 900px; margin: 20px auto; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-            .btn { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; margin-top: 20px; }
+            body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f4f4f9; }
+            header { background: #333; color: white; padding: 10px; text-align: center; }
+            .container { max-width: 900px; margin: 20px auto; background: white; padding: 20px; border-radius: 8px; }
+            .btn { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
             .btn:disabled { background: #aaa; cursor: not-allowed; }
             .notice { color: red; font-weight: bold; margin-top: 10px; }
         </style>
@@ -37,8 +39,7 @@ def home():
             <h1>Graphatize AI Art Generator</h1>
         </header>
         <div class="container">
-            <h2>Generate Your Art Prompt</h2>
-            <p>Select your options and generate your custom art prompt:</p>
+            <h2>Create Your Art Prompt</h2>
             <form>
                 <label for="category">Category:</label>
                 <select id="category" name="category" {% if not subscribed %}disabled{% endif %}>
@@ -47,12 +48,15 @@ def home():
                     <option value="vehicles">Vehicles</option>
                     <option value="environments">Environments</option>
                 </select><br><br>
-                <button class="btn" type="button" {% if not subscribed %}disabled{% endif %}>Generate Prompt</button>
+                <label for="number">Number of items:</label>
+                <input type="number" id="number" name="number" min="1" max="100" {% if not subscribed %}disabled{% endif %}><br><br>
+                <button class="btn" type="submit" {% if not subscribed %}disabled{% endif %}>Generate</button>
             </form>
+            <p><a href="/saved">View Saved Prompts</a></p>
             {% if not logged_in %}
                 <p class="notice">Please <a href="/login">log in</a> or <a href="/register">register</a> to use the generator.</p>
             {% elif not subscribed %}
-                <p class="notice">Please <a href="/subscribe">subscribe</a> to enable the generator.</p>
+                <p class="notice">Please <a href="/subscribe">subscribe</a> to unlock full functionality.</p>
             {% endif %}
         </div>
     </body>
@@ -64,10 +68,15 @@ def register():
     if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")
+        email = request.form.get("email")
         if username in users:
             return "User already exists. Please log in instead."
-        users[username] = {"password": password, "subscribed": False}
-        return redirect(url_for("login"))
+        verification_code = random.randint(100000, 999999)
+        verification_codes[email] = verification_code
+        # Send email (simplified for demonstration purposes)
+        print(f"Verification code for {email}: {verification_code}")
+        users[username] = {"password": password, "email": email, "verified": False, "subscribed": False, "saved_prompts": []}
+        return redirect(url_for("verify_email"))
     return render_template_string("""
     <h1>Register</h1>
     <form method="POST">
@@ -75,66 +84,71 @@ def register():
         <input type="text" name="username" required><br>
         <label>Password:</label><br>
         <input type="password" name="password" required><br>
+        <label>Email:</label><br>
+        <input type="email" name="email" required><br>
         <button type="submit">Register</button>
     </form>
     """)
 
-@app.route("/login", methods=["GET", "POST"])
-def login():
+@app.route("/verify_email", methods=["GET", "POST"])
+def verify_email():
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
-        user = users.get(username)
-        if user and user["password"] == password:
-            session["logged_in"] = True
-            session["username"] = username
-            session["subscribed"] = user["subscribed"]
-            return redirect(url_for("home"))
-        return "Invalid credentials. Please try again."
+        email = request.form.get("email")
+        code = int(request.form.get("code"))
+        if verification_codes.get(email) == code:
+            for user in users.values():
+                if user["email"] == email:
+                    user["verified"] = True
+                    return redirect(url_for("login"))
+        return "Invalid code. Please try again."
     return render_template_string("""
-    <h1>Login</h1>
+    <h1>Verify Email</h1>
     <form method="POST">
-        <label>Username:</label><br>
-        <input type="text" name="username" required><br>
-        <label>Password:</label><br>
-        <input type="password" name="password" required><br>
-        <button type="submit">Login</button>
+        <label>Email:</label><br>
+        <input type="email" name="email" required><br>
+        <label>Verification Code:</label><br>
+        <input type="number" name="code" required><br>
+        <button type="submit">Verify</button>
     </form>
     """)
 
-@app.route("/subscribe")
-def subscribe():
+@app.route("/saved")
+def saved():
     if not session.get("logged_in"):
         return redirect(url_for("login"))
     username = session["username"]
+    saved_prompts = users[username]["saved_prompts"]
+    return render_template_string("""
+    <h1>Saved Prompts</h1>
+    <ul>
+        {% for prompt in saved_prompts %}
+            <li>{{ prompt }}</li>
+        {% endfor %}
+    </ul>
+    {% if len(saved_prompts) < 5 or session.get("subscribed") %}
+        <form method="POST" action="/save_prompt">
+            <label>New Prompt:</label><br>
+            <input type="text" name="prompt" required><br>
+            <button type="submit">Save Prompt</button>
+        </form>
+    {% else %}
+        <p>You have reached the limit of 5 saved prompts. Upgrade to premium for unlimited saved prompts!</p>
+    {% endif %}
+    """)
 
-    # Redirect user to Stripe checkout
-    checkout_session = stripe.checkout.Session.create(
-        payment_method_types=["card"],
-        line_items=[
-            {
-                "price": STRIPE_PRICE_ID,
-                "quantity": 1,
-            }
-        ],
-        mode="subscription",
-        success_url=url_for("subscription_success", _external=True),
-        cancel_url=url_for("home", _external=True),
-    )
-    return redirect(checkout_session.url)
+@app.route("/save_prompt", methods=["POST"])
+def save_prompt():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+    username = session["username"]
+    prompt = request.form.get("prompt")
+    if len(users[username]["saved_prompts"]) < 5 or session.get("subscribed"):
+        users[username]["saved_prompts"].append(prompt)
+    return redirect(url_for("saved"))
 
-@app.route("/subscription_success")
-def subscription_success():
-    username = session.get("username")
-    if username:
-        users[username]["subscribed"] = True
-        session["subscribed"] = True
-    return redirect(url_for("home"))
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("home"))
+# Include existing login, subscription, and logout routes
+# Add your Stripe keys and ensure saved prompts work
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
