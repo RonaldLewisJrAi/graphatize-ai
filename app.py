@@ -5,7 +5,7 @@ app = Flask(__name__)
 app.secret_key = "super_secret_key"
 
 # Stripe configuration (your shared keys)
-stripe.api_key = "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"  # Your Stripe secret key
+stripe.api_key = "SECRET_API_KEY"  # Your Stripe secret key
 STRIPE_PRICE_ID = "prctbl_1QTunJPJfMWwkhDQNsSy4PPD"  # Your Stripe price ID for the subscription
 
 # Example user database
