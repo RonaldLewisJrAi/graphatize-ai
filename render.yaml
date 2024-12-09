@@ -1,7 +1,3 @@
-services:
-  - type: web
-    name: ai-art-generator
-    env: python
-    buildCommand: ""
-    startCommand: gunicorn app:app
-    plan: free
+git add requirements.txt
+git commit -m "Add stripe to requirements"
+git push origin main
